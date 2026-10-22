@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "investigation": "./src/sre_agent/graphs/investigation/graph.py:graph",
+    "remediation": "./src/sre_agent/graphs/remediation/graph.py:graph"
+  },
+  "env": "../.env"
+}

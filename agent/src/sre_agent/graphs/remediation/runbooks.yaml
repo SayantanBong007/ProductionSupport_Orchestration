@@ -1,0 +1,70 @@
+# Approved remediation runbooks.
+#
+# The remediation planner (an LLM) may only propose a runbook from this file,
+# with a target from its allowed_targets. Nothing runs without human approval,
+# and the executor can only perform the actions listed under `steps`.
+#
+# ${VAR} is replaced with the agent's configuration (see config.py).
+# A step without `target` acts on the target chosen by the planner.
+#
+# Step actions: docker_start, docker_restart, wait_container_running,
+#               wait_postgres_ready, wait_http_healthy, sql_restore_app_role
+
+runbooks:
+  - id: restart_service
+    title: Restart a running service container
+    when_to_use: >
+      The container is running but the process inside is wedged or has exhausted
+      an in-process resource (connection pool, threads, memory, file handles) and
+      a fresh process would recover it.
+    risk: Brief downtime of the target while it restarts; in-flight requests fail.
+    allowed_targets: ["${BACKEND_CONTAINER}"]
+    steps:
+      - action: docker_restart
+      - action: wait_http_healthy
+        timeout: 60
+
+  - id: start_stopped_service
+    title: Start a stopped service container
+    when_to_use: >
+      The service container has exited or been stopped, and the service it
+      depends on is healthy.
+    risk: Low — starts the existing container with its existing configuration.
+    allowed_targets: ["${BACKEND_CONTAINER}"]
+    steps:
+      - action: docker_start
+      - action: wait_container_running
+        timeout: 30
+      - action: wait_http_healthy
+        timeout: 60
+
+  - id: recover_database
+    title: Start the database and recycle the application's connections
+    when_to_use: >
+      The database container has exited or been stopped. The application keeps
+      broken connections to the old database process, so it is restarted after
+      the database accepts connections again.
+    risk: Brief application restart after the database is back.
+    allowed_targets: ["${DATABASE_CONTAINER}"]
+    steps:
+      - action: docker_start
+      - action: wait_postgres_ready
+        timeout: 60
+      - action: docker_restart
+        target: "${BACKEND_CONTAINER}"
+      - action: wait_http_healthy
+        timeout: 60
+
+  - id: restore_app_db_role
+    title: Restore the application's database role
+    when_to_use: >
+      The application cannot authenticate to the database (password rejected or
+      login revoked) while the database itself is running.
+    risk: Resets the application role's password to the configured value and restarts the application.
+    allowed_targets: ["${DATABASE_CONTAINER}"]
+    steps:
+      - action: sql_restore_app_role
+      - action: docker_restart
+        target: "${BACKEND_CONTAINER}"
+      - action: wait_http_healthy
+        timeout: 60

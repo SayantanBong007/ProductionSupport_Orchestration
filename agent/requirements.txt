@@ -1,0 +1,11 @@
+# Runtime dependencies (mirrors pyproject.toml; installed first in the Docker
+# image so this layer is cached independently of source changes).
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+httpx==0.25.2
+asyncpg==0.29.0
+openai>=1.40
+langgraph>=1.0,<2
+chromadb>=0.5.0
+numpy<2.0
+pyyaml>=6.0

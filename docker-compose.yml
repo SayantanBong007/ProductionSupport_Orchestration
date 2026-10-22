@@ -1,0 +1,212 @@
+services:
+
+  # ── Database ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: poc-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pocdb}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      APP_DB_USER: ${APP_DB_USER:?set APP_DB_USER in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - poc-network
+
+  # ── Application ────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: poc-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${APP_DB_USER}:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-pocdb}
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      FAULT_INJECTION_TOKEN: ${FAULT_INJECTION_TOKEN:-}
+      LOG_LEVEL: INFO
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - poc-network
+
+  # ── Synthetic client (steady user-like traffic, black-box metrics) ────────
+  loadgen:
+    build:
+      context: ./loadgen
+      dockerfile: Dockerfile
+    container_name: poc-loadgen
+    environment:
+      TARGET_URL: http://backend:8000
+      TARGET_PATHS: /orders,/health
+      REQUESTS_PER_SECOND: "4"
+    depends_on:
+      - backend
+    networks:
+      - poc-network
+
+  # ── AI Agent + Demo UI ─────────────────────────────────────────────────────
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: poc-agent
+    environment:
+      BACKEND_URL: http://backend:8000
+      POSTGRES_ADMIN_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pocdb}
+      APP_DB_USER: ${APP_DB_USER}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      APP_DB_NAME: ${POSTGRES_DB:-pocdb}
+      PROMETHEUS_URL: http://prometheus:9090
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      LLM_API_KEY: ${LLM_API_KEY:-${OPENROUTER_API_KEY:-}}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.groq.com/openai/v1}
+      MODEL_NAME: ${MODEL_NAME:-openai/gpt-oss-120b}
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}
+      COMMANDER_MODEL: ${COMMANDER_MODEL:-}
+      SPECIALIST_MODEL: ${SPECIALIST_MODEL:-openai/gpt-oss-20b}
+      LOGS_AGENT_MODEL: ${LOGS_AGENT_MODEL:-}
+      METRICS_AGENT_MODEL: ${METRICS_AGENT_MODEL:-}
+      INFRA_AGENT_MODEL: ${INFRA_AGENT_MODEL:-}
+      LLM_FALLBACK_MODELS: ${LLM_FALLBACK_MODELS:-qwen/qwen3.8-27b,openai/gpt-oss-20b}
+      AGENT_API_KEY: ${AGENT_API_KEY:?set AGENT_API_KEY in .env}
+      FAULT_INJECTION_TOKEN: ${FAULT_INJECTION_TOKEN:-}
+      PORTAINER_ADMIN_PASSWORD: ${PORTAINER_ADMIN_PASSWORD:-}
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-}
+      GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-}
+      GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-}
+      KIBANA_URL: http://kibana:5601
+      PORTAINER_URL: http://portainer:9000
+      GITEA_URL: http://gitea:3000
+      TZ: Asia/Kolkata
+      REPORTS_DIR: /app/reports
+      CHROMA_DIR: /app/chroma
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./reports:/app/reports
+      - chroma_data:/app/chroma
+    depends_on:
+      - backend
+      - loadgen
+      - prometheus
+      - elasticsearch
+      - kibana
+      - portainer
+      - gitea
+    networks:
+      - poc-network
+
+  # ── Prometheus ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: poc-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - poc-network
+
+  # ── Grafana ────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: poc-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - poc-network
+
+  # ── Elasticsearch ──────────────────────────────────────────────────────────
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: poc-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - poc-network
+
+  # ── Kibana ─────────────────────────────────────────────────────────────────
+  kibana:
+    image: kibana:8.11.0
+    container_name: poc-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - poc-network
+
+  # ── Portainer (container management, replaces ArgoCD for Docker) ───────────
+  portainer:
+    image: portainer/portainer-ce:2.21.4
+    container_name: poc-portainer
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - poc-network
+
+  # ── Gitea (self-hosted Git) ────────────────────────────────────────────────
+  gitea:
+    image: gitea/gitea:1.21
+    container_name: poc-gitea
+    ports:
+      - "3001:3000"
+      - "2222:22"
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__ROOT_URL: http://localhost:3001
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__service__REQUIRE_SIGNIN_VIEW: "false"
+    volumes:
+      - gitea_data:/data
+    networks:
+      - poc-network
+
+networks:
+  poc-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  grafana_data:
+  es_data:
+  portainer_data:
+  gitea_data:
+  chroma_data:

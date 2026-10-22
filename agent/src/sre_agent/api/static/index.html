@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentic Production Support — POC</title>
+<style>
+  :root {
+    --bg:     #0d1117;
+    --panel:  #161b22;
+    --border: #30363d;
+    --text:   #e6edf3;
+    --muted:  #8b949e;
+    --green:  #56d364;
+    --red:    #f85149;
+    --yellow: #e3b341;
+    --blue:   #58a6ff;
+    --purple: #d2a8ff;
+    --cyan:   #79c0ff;
+    --orange: #ffa657;
+    --gold:   #d4a017;
+    --teal:   #39d353;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* HEADER */
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 10px 20px; display: flex; align-items: center;
+    justify-content: space-between; flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: .5px; }
+  header h1 span { color: var(--blue); }
+  #phase-badge {
+    font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    padding: 4px 14px; border-radius: 20px;
+    background: #21262d; border: 1px solid var(--border); color: var(--muted);
+    transition: all .3s;
+  }
+  #phase-badge.idle         { color: var(--muted); }
+  #phase-badge.broken       { color: var(--red);    border-color: var(--red);    background: #3d0f0a; }
+  #phase-badge.investigating{ color: var(--yellow); border-color: var(--yellow); background: #2d2200; }
+  #phase-badge.awaiting     { color: var(--blue);   border-color: var(--blue);   background: #0d1f38; }
+  #phase-badge.fixing       { color: var(--orange); border-color: var(--orange); background: #2d1a00; }
+  #phase-badge.resolved     { color: var(--green);  border-color: var(--green);  background: #0a2d10; }
+  #phase-badge.failed       { color: var(--red);    border-color: var(--red);    background: #3d0f0a; }
+
+  /* LAYOUT */
+  main { display: flex; flex: 1; overflow: hidden; }
+
+  /* LEFT PANEL */
+  aside {
+    width: 270px; min-width: 270px;
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow-y: auto;
+    padding: 14px; gap: 14px;
+  }
+  .sec-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 6px;
+  }
+  .status-grid { display: flex; flex-direction: column; gap: 5px; }
+  .stat-card {
+    background: #21262d; border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .stat-card .lbl { font-size: 11px; color: var(--muted); }
+  .stat-card .val {
+    font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 4px; background: #30363d; color: var(--muted);
+  }
+  .val.green  { color: var(--green);  background: #0a2d10; }
+  .val.red    { color: var(--red);    background: #3d0f0a; }
+  .val.yellow { color: var(--yellow); background: #2d2200; }
+
+  .divider { border: none; border-top: 1px solid var(--border); }
+  #action-msg { font-size: 11px; color: var(--red); }
+  #action-msg:empty { display: none; }
+  .btn-group { display: flex; flex-direction: column; gap: 5px; }
+
+  button {
+    width: 100%; padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 7px; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .15s; text-align: left;
+    background: #21262d; color: var(--text);
+  }
+  button:disabled { opacity: .3; cursor: not-allowed; }
+  button.traffic { border-color: var(--blue); color: var(--blue); }
+  button.traffic:hover:not(:disabled)    { background: #0d1f38; }
+  button.break-r { border-color: var(--red); color: var(--red); }
+  button.break-r:hover:not(:disabled)   { background: #3d0f0a; }
+  button.invest  { border-color: var(--yellow); color: var(--yellow); }
+  button.invest:hover:not(:disabled)    { background: #2d2200; }
+  button.rst     { border-color: var(--muted); color: var(--muted); }
+  button.rst:hover:not(:disabled)       { background: #21262d; color: var(--text); }
+
+  .obs-links { display: flex; flex-direction: column; gap: 3px; }
+  .obs-links a {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--muted); text-decoration: none;
+    padding: 5px 8px; border-radius: 5px; transition: all .15s;
+  }
+  .obs-links a:hover { background: #21262d; color: var(--text); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+  .dot.up { background: var(--green); box-shadow: 0 0 5px var(--green); }
+
+  /* RIGHT: LOG STREAM */
+  section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .stream-hdr {
+    padding: 9px 18px; border-bottom: 1px solid var(--border);
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--muted); text-transform: uppercase;
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); box-shadow: 0 0 6px var(--green);
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }
+
+  #log-stream {
+    flex: 1; overflow-y: auto; padding: 10px 18px;
+    font-family: 'Cascadia Code','Consolas','Fira Code',monospace;
+    font-size: 12px; line-height: 1.75; scroll-behavior: smooth;
+  }
+  #log-stream::-webkit-scrollbar { width: 4px; }
+  #log-stream::-webkit-scrollbar-track { background: transparent; }
+  #log-stream::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .empty-state {
+    color: var(--muted); text-align: center; margin-top: 80px; font-size: 13px;
+  }
+  .empty-state .icon { font-size: 36px; margin-bottom: 10px; }
+
+  /* LOG ENTRY */
+  .le { display: flex; align-items: flex-start; gap: 8px; padding: 1px 0; }
+  .le-time { color: var(--muted); font-size: 10.5px; flex-shrink:0; margin-top:2px; min-width:54px; }
+  .le-badge {
+    font-size: 9.5px; font-weight: 700; letter-spacing: .4px;
+    padding: 1px 6px; border-radius: 3px; flex-shrink: 0;
+    border: 1px solid; opacity: .9; min-width: 115px; text-align: center; margin-top:1px;
+  }
+  .le-icon { flex-shrink: 0; margin-top: 1px; width: 12px; text-align: center; }
+  .le-msg  { color: var(--text); word-break: break-word; }
+  .le-msg.result { color: #adbdd4; }
+  .le-msg.step   { color: var(--cyan); }
+  .le-msg.error  { color: var(--red); }
+
+  /* INCIDENT CARD → SECTIONS → AGENT BLOCKS */
+  .incident { border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; background: #0f141b; }
+  .incident-hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); background: #161b22;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 1.5px; color: var(--text);
+    border-radius: 8px 8px 0 0;
+  }
+  .incident-time { font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .incident-body { padding: 4px 12px 10px; }
+  .sec { margin-top: 8px; }
+  .sec > summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px;
+    padding: 5px 0; border-bottom: 1px solid var(--border);
+    font-size: 10px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted);
+  }
+  .sec > summary::-webkit-details-marker { display: none; }
+  .sec > summary .sec-title::before { content: '● '; color: var(--yellow); }
+  .sec.done > summary .sec-title::before { content: '✓ '; color: var(--green); }
+  .sec:not([open]) > summary .sec-title::after { content: '  (collapsed)'; font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .sec-time { margin-left: auto; font-weight: 400; letter-spacing: 0; }
+  .sec-body { padding: 6px 0 2px; }
+  .agent-block { border-left: 3px solid; padding: 2px 0 4px 10px; margin: 6px 0; }
+  .agent-hdr { font-size: 9.5px; font-weight: 700; letter-spacing: 1px; margin-bottom: 2px; }
+  .sys-line { margin: 8px 0; }
+
+  /* LLM STREAMING */
+  .llm-box {
+    background: #161b22; border: 1px solid var(--border);
+    border-left: 3px solid; border-radius: 6px;
+    padding: 10px 14px; margin: 6px 0;
+  }
+  .llm-hdr {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 1px;
+    margin-bottom: 5px; display: flex; align-items: center; gap: 8px;
+  }
+  .llm-body { color: var(--text); white-space: pre-wrap; line-height: 1.6; font-size: 12px; }
+  .cursor {
+    display: inline-block; width: 7px; height: 13px;
+    background: currentColor; animation: blink .75s step-end infinite;
+    vertical-align: text-bottom; margin-left: 1px;
+  }
+  @keyframes blink { 0%,100%{opacity:1}50%{opacity:0} }
+
+  /* FINAL REPORT CARD */
+  .report {
+    background: #161b22; border: 1px solid var(--border);
+    border-top: 3px solid var(--gold); border-radius: 8px;
+    margin: 10px 0; overflow: hidden;
+  }
+  .report-hdr {
+    background: #1c2128; padding: 10px 16px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--gold); text-transform: uppercase;
+  }
+  .report-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 7px; }
+  .rrow { display: flex; gap: 10px; font-size: 12px; }
+  .rlbl { color: var(--muted); min-width: 95px; flex-shrink: 0; }
+  .rval { color: var(--text); font-weight: 500; }
+  .rval.red    { color: var(--red); }
+  .rval.yellow { color: var(--yellow); }
+  .rval.green  { color: var(--green); }
+  .report-narrative {
+    font-size: 11.5px; color: #adbdd4; line-height: 1.6;
+    padding: 8px 0 0; border-top: 1px solid var(--border); margin-top: 2px;
+  }
+  .fix-box {
+    background: #0d2010; border: 1px solid #1a4a2a;
+    border-radius: 6px; padding: 9px 13px; margin-top: 2px;
+    font-size: 11.5px; color: var(--green);
+  }
+  .fix-lbl { font-weight: 700; margin-bottom: 3px; color: var(--teal); font-size: 10px; letter-spacing: 1px; }
+  .exec-btn {
+    width: 100%; padding: 12px; margin-top: 10px;
+    background: linear-gradient(135deg,#0a2d10,#1a4a2a);
+    border: 2px solid var(--green); border-radius: 8px;
+    color: var(--green); font-size: 13px; font-weight: 700;
+    letter-spacing: 1px; cursor: pointer; text-transform: uppercase;
+    animation: glow 2s ease-in-out infinite; transition: all .2s;
+  }
+  .exec-btn:hover    { background: #1a4a2a; }
+  .exec-btn:disabled { opacity: .35; cursor: not-allowed; animation: none; }
+  @keyframes glow {
+    0%,100%{box-shadow:0 0 8px rgba(86,211,100,.2)}
+    50%{box-shadow:0 0 18px rgba(86,211,100,.45)}
+  }
+
+  .ev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .ev-list li { font-size: 11.5px; line-height: 1.5; }
+  .ev-ok  { color: var(--green); font-weight: 700; }
+  .ev-bad { color: var(--red); font-weight: 700; }
+  .ev-quote { color: #adbdd4; font-family: 'Cascadia Code','Consolas',monospace; }
+  .ev-why { color: var(--muted); }
+  .rsec { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: var(--muted);
+          text-transform: uppercase; margin-top: 4px; }
+  .usage { font-size: 10.5px; color: var(--muted); }
+
+  /* WATCHER AUTO-ALERT */
+  .watcher-alert {
+    background: #1a0a00; border: 2px solid var(--red);
+    border-radius: 8px; padding: 12px 16px; margin: 8px 0;
+    animation: alertPulse 1s ease-in-out 3;
+  }
+  @keyframes alertPulse {
+    0%,100%{border-color:var(--red)}
+    50%{border-color:#ff8c00;box-shadow:0 0 14px rgba(248,81,73,.5)}
+  }
+  .watcher-alert-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--red); text-transform: uppercase; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .watcher-alert-signals { list-style: none; margin: 0; padding: 0; }
+  .watcher-alert-signals li {
+    font-size: 11.5px; color: #ffb3ae; padding: 2px 0;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .watcher-alert-signals li::before { content: "⚠"; font-size: 10px; }
+
+  /* INCIDENT CLOSED */
+  .closed {
+    background: #0a2d10; border: 1px solid var(--green);
+    border-radius: 8px; padding: 16px; margin: 10px 0; text-align: center;
+  }
+  .closed-title { font-size: 15px; font-weight: 700; color: var(--green); margin-bottom: 8px; }
+  .closed-text  { font-size: 11.5px; color: #8bc492; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Agentic Production Support &nbsp;·&nbsp; <span>Autonomous Multi-Agent System</span></h1>
+  <div id="phase-badge" class="idle">● IDLE</div>
+</header>
+
+<main>
+  <aside>
+    <!-- Status -->
+    <div>
+      <div class="sec-label">System Status</div>
+      <div class="status-grid">
+        <div class="stat-card"><span class="lbl">Backend</span><span class="val" id="s-backend">UNKNOWN</span></div>
+        <div class="stat-card"><span class="lbl">Database</span><span class="val" id="s-db">UNKNOWN</span></div>
+        <div class="stat-card"><span class="lbl">Client errors (1m)</span><span class="val" id="s-errors">—</span></div>
+        <div class="stat-card"><span class="lbl">Confidence</span><span class="val" id="s-conf">—</span></div>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div id="action-msg"></div>
+
+    <div>
+      <div class="sec-label">Inject Incident</div>
+      <div class="btn-group">
+        <button class="break-r" id="btn-spike"    onclick="action('break-pool')">
+          🔥 Exhaust Connection Pool
+        </button>
+        <button class="break-r" id="btn-backend"  onclick="action('break-backend')">
+          💀 Kill Backend Service
+        </button>
+        <button class="break-r" id="btn-postgres" onclick="action('break-postgres')">
+          🗄️ Kill Database Server
+        </button>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div>
+      <div class="sec-label">Agent Control</div>
+      <div class="btn-group">
+        <button class="invest" id="btn-investigate" disabled onclick="action('investigate')" title="Investigation auto-starts — this is a manual override">
+          🤖 Investigate (override)
+        </button>
+        <button class="rst" id="btn-reset" disabled onclick="action('reset')">
+          ↺ Reset Demo
+        </button>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div>
+      <div class="sec-label">Continuous Watcher</div>
+      <div class="stat-card">
+        <span class="lbl">Auto-Monitor</span>
+        <span class="val" id="watcher-status" style="display:flex;align-items:center;gap:5px">
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block" id="watcher-dot"></span>
+          STARTING
+        </span>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;padding:0 2px">
+        Generic alert rules (containers, /health, client error ratio) — the agents are never told what was injected
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div>
+      <div class="sec-label">Observability</div>
+      <div class="obs-links">
+        <a href="http://localhost:3000" target="_blank"><span class="dot up"></span>Grafana</a>
+        <a href="http://localhost:5601" target="_blank"><span class="dot up"></span>Kibana</a>
+        <a href="http://localhost:9090" target="_blank"><span class="dot up"></span>Prometheus</a>
+        <a href="http://localhost:9000" target="_blank"><span class="dot up"></span>Portainer</a>
+        <a href="http://localhost:3001" target="_blank"><span class="dot up"></span>Gitea</a>
+      </div>
+    </div>
+  </aside>
+
+  <section>
+    <div class="stream-hdr">
+      <div class="live-dot"></div>
+      Agent Log Stream
+      <span style="margin-left:auto;font-size:10px;font-weight:400;color:var(--muted)">Real-time · SSE</span>
+    </div>
+    <div id="log-stream">
+      <div class="empty-state">
+        <div class="icon">🤖</div>
+        <div>Ready — inject an incident and the watcher will auto-investigate</div>
+        <div style="margin-top:6px;font-size:11px;color:#484f58">
+          Watcher → Triage → Incident Commander ⇄ Logs · Metrics · Infra agents → Evidence Verifier → Reviewer → Remediation Planner → Human approval
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const AGENTS = {
+  'INCIDENT COMMANDER':  { color:'#d4a017', label:'COMMANDER'        },
+  'TRIAGE':              { color:'#58a6ff', label:'TRIAGE'           },
+  'LOGS AGENT':          { color:'#79c0ff', label:'LOGS AGENT'       },
+  'METRICS AGENT':       { color:'#d2a8ff', label:'METRICS AGENT'    },
+  'INFRA AGENT':         { color:'#39d353', label:'INFRA AGENT'      },
+  'EVIDENCE VERIFIER':   { color:'#e3b341', label:'EVIDENCE CHECK'   },
+  'REVIEWER':            { color:'#ff7b72', label:'REVIEWER'         },
+  'REMEDIATION PLANNER': { color:'#56d364', label:'REM. PLANNER'     },
+  'IMPACT':              { color:'#f85149', label:'IMPACT'           },
+  'INCIDENT MEMORY':     { color:'#8b949e', label:'MEMORY'           },
+  'EXECUTOR':            { color:'#79c0ff', label:'EXECUTOR'         },
+  'VERIFIER':            { color:'#39d353', label:'VERIFIER'         },
+  'SYSTEM':              { color:'#8b949e', label:'SYSTEM'           },
+};
+
+function ac(name) { return AGENTS[name] || { color:'#8b949e', label:name.slice(0,14) }; }
+function $s()     { return document.getElementById('log-stream'); }
+function esc(s)   {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function clrEmpty() { const e=$s().querySelector('.empty-state'); if(e)e.remove(); }
+function scrollB()  { const el=$s(); el.scrollTop=el.scrollHeight; }
+function now()      { return new Date().toLocaleTimeString('en-GB',{hour12:false}); }
+
+const streaming = {};
+
+/* Live trace layout: incident card → titled sections → (optionally) one block
+   per agent, so agents working in parallel never interleave. */
+let currentRun = null;   // run id of the incident on screen
+let card = null;         // its card element
+let section = null;      // {el, body, grouped, groups}
+
+function cardBody() { clrEmpty(); return card ? card.querySelector('.incident-body') : $s(); }
+
+function newIncident(runId) {
+  clrEmpty();
+  if (section) section.el.classList.add('done');
+  card = document.createElement('div');
+  card.className = 'incident';
+  card.innerHTML = `<div class="incident-hdr"><span>◆ INCIDENT #${runId}</span>` +
+                   `<span class="incident-time">${now()}</span></div><div class="incident-body"></div>`;
+  $s().appendChild(card);
+  currentRun = runId; section = null;
+  scrollB();
+}
+
+function newSection(title, grouped, time) {
+  if (section) section.el.classList.add('done');
+  const el = document.createElement('details');
+  el.className = 'sec'; el.open = true;
+  el.innerHTML = `<summary><span class="sec-title">${esc(title)}</span>` +
+                 `<span class="sec-time">${esc(time||now())}</span></summary><div class="sec-body"></div>`;
+  cardBody().appendChild(el);
+  section = {el, body: el.querySelector('.sec-body'), grouped, groups: {}};
+  scrollB();
+}
+
+/* Where an agent's output goes: its own block in grouped sections. */
+function target(agent) {
+  if (!card) return $s();
+  if (!section) newSection('Activity', false);
+  if (!section.grouped || !agent || agent === 'SYSTEM') return section.body;
+  let g = section.groups[agent];
+  if (!g) {
+    const cfg = ac(agent);
+    const el = document.createElement('div');
+    el.className = 'agent-block'; el.style.borderLeftColor = cfg.color;
+    el.innerHTML = `<div class="agent-hdr" style="color:${cfg.color}">${esc(cfg.label)}</div><div class="agent-body"></div>`;
+    section.body.appendChild(el);
+    g = section.groups[agent] = el.querySelector('.agent-body');
+  }
+  return g;
+}
+
+/* Accept an event of an incident run; open a new card when a new run starts.
+   Late events from an older (cancelled) run are ignored. */
+function acceptRun(d) {
+  if (d.run_id == null) return true;
+  if (currentRun != null && d.run_id < currentRun) return false;
+  if (d.run_id !== currentRun) newIncident(d.run_id);
+  return true;
+}
+
+/* ── append a plain log entry ── */
+function appendLogTo(container, agent, type, msg, time) {
+  const cfg = ac(agent);
+  const icon = {start:'▶',result:'✓',step:'→',error:'✗'}[type]||'·';
+  const mc   = {result:'result',step:'step',error:'error'}[type]||'';
+  container.innerHTML =
+    `<div class="le"><span class="le-time">${time||now()}</span>` +
+    `<span class="le-badge" style="color:${cfg.color};border-color:${cfg.color}30">${cfg.label}</span>` +
+    `<span class="le-icon" style="color:${cfg.color}">${icon}</span>` +
+    `<span class="le-msg ${mc}">${esc(msg)}</span></div>`;
+  scrollB();
+}
+function appendLog(agent, type, msg, time) {
+  clrEmpty();
+  const cfg = ac(agent);
+  const icon = {start:'▶',result:'✓',step:'→',error:'✗'}[type]||'·';
+  const mc   = {result:'result',step:'step',error:'error'}[type]||'';
+  const el = document.createElement('div');
+  el.className = 'le';
+  el.innerHTML =
+    `<span class="le-time">${time||now()}</span>` +
+    `<span class="le-badge" style="color:${cfg.color};border-color:${cfg.color}30">${cfg.label}</span>` +
+    `<span class="le-icon" style="color:${cfg.color}">${icon}</span>` +
+    `<span class="le-msg ${mc}">${esc(msg)}</span>`;
+  target(agent).appendChild(el);
+  scrollB();
+}
+
+/* ── LLM streaming ── */
+function startStream(key, time) {
+  clrEmpty();
+  const cfg = ac(key);
+
+  const hdr = document.createElement('div');
+  hdr.className = 'llm-hdr';
+  hdr.style.color = cfg.color;
+  const label = document.createTextNode('✦ ' + cfg.label + '  ·  ');
+  const ts    = document.createElement('span');
+  ts.style.fontWeight = '400';
+  ts.textContent = time || now();
+  hdr.appendChild(label);
+  hdr.appendChild(ts);
+
+  const cursor = document.createElement('span');
+  cursor.className = 'cursor';
+  cursor.style.color = cfg.color;
+
+  const body = document.createElement('div');
+  body.className = 'llm-body';
+  body.appendChild(cursor);
+
+  const box = document.createElement('div');
+  box.className = 'llm-box';
+  box.style.borderLeftColor = cfg.color;
+  box.appendChild(hdr);
+  box.appendChild(body);
+
+  target(key).appendChild(box);
+  streaming[key] = { bodyEl: body, color: cfg.color };
+  scrollB();
+}
+function addToken(key, tok) {
+  const s=streaming[key]; if(!s)return;
+  const cur=s.bodyEl.querySelector('.cursor'); if(cur)cur.remove();
+  s.bodyEl.appendChild(document.createTextNode(tok));
+  const nc=document.createElement('span');
+  nc.className='cursor'; nc.style.color=s.color;
+  s.bodyEl.appendChild(nc);
+  scrollB();
+}
+function endStream(key) {
+  const s=streaming[key]; if(!s)return;
+  const cur=s.bodyEl.querySelector('.cursor'); if(cur)cur.remove();
+  delete streaming[key];
+}
+
+/* ── final report card ── */
+function renderReport(d) {
+  clrEmpty();
+  const sc  = {CRITICAL:'red',HIGH:'yellow',MEDIUM:'yellow',LOW:'green'}[d.severity]||'yellow';
+  const pct = d.confidence==null ? null : Math.round(d.confidence*100);
+  const imp = d.impact;
+  const impTxt = imp
+    ? `${imp.failed}/${imp.total} synthetic-client requests failed (${Math.round(imp.ratio*100)}%) since incident start · ` +
+      Object.entries(imp.by_path||{}).map(([p,v])=>`${p}: ${v.failed}/${v.total}`).join(', ')
+    : 'not measured';
+  const ev = (d.evidence||[]).map(c=>
+    `<li><span class="${c.verified?'ev-ok':'ev-bad'}">${c.verified?'✓':'✗'} ${esc(c.id)}</span> ` +
+    `<span class="ev-quote">"${esc(c.quote)}"</span> <span class="ev-why">— ${esc(c.supports||'')}${c.verified?'':' ('+esc(c.reason)+')'}</span></li>`).join('');
+  const tl = (d.timeline||[]).map(t=>
+    `<li><span class="ev-quote">${esc(t.time)}</span> ${esc(t.event)} <span class="ev-why">${t.evidence_id?'['+esc(t.evidence_id)+']':''}</span></li>`).join('');
+  const oq = (d.open_questions||[]).map(q=>`<li>${esc(q)}</li>`).join('');
+  const rv = d.review && d.review.verdict==='challenge'
+    ? [...(d.review.unsupported_claims||[]), ...(d.review.untested_alternatives||[])].map(q=>`<li>${esc(q)}</li>`).join('')
+    : '';
+  const rem = d.remediation;
+  const fix = rem
+    ? `<div class="fix-box"><div class="fix-lbl">PROPOSED RUNBOOK · ${esc(rem.runbook_id)} → ${esc(rem.target)}</div>` +
+      `<b>${esc(rem.title)}</b><br>${esc(rem.rationale||'')}<br>` +
+      `<span class="ev-why">Steps: ${(rem.steps||[]).map(s=>esc(s.action+' '+s.target)).join(' → ')} · Risk: ${esc(rem.risk||'')}</span></div>` +
+      `<button class="exec-btn" id="exec-btn" onclick="execFix()">▶ EXECUTE RUNBOOK &nbsp;·&nbsp; Human Approval Required</button>`
+    : `<div class="fix-box" style="color:var(--yellow);border-color:#4a3a00;background:#1f1800">` +
+      `<div class="fix-lbl" style="color:var(--yellow)">NO AUTOMATED FIX</div>` +
+      `${d.ai_available===false?'AI investigation unavailable.':'No approved runbook addresses this root cause.'} Manual action required.</div>`;
+  const u = d.llm_usage||{};
+  const el  = document.createElement('div');
+  el.className='report';
+  el.innerHTML=
+    `<div class="report-hdr">◆ INCIDENT COMMANDER — DIAGNOSIS</div>` +
+    `<div class="report-body">` +
+      `<div class="rrow"><span class="rlbl">Root Cause</span><span class="rval red">${esc(d.root_cause||'—')}</span></div>` +
+      `<div class="rrow"><span class="rlbl">Category</span><span class="rval">${esc(d.failure_category||'—')}</span></div>` +
+      `<div class="rrow"><span class="rlbl">Severity</span><span class="rval ${sc}">${esc(d.severity||'—')}</span></div>` +
+      `<div class="rrow"><span class="rlbl">Confidence</span><span class="rval">${pct==null?'—':pct+'%'}` +
+        `${d.evidence_total?` <span class="ev-why">(model ${Math.round((d.model_confidence||0)*100)}% × ${d.evidence_verified}/${d.evidence_total} citations verified)</span>`:''}</span></div>` +
+      `<div class="rrow"><span class="rlbl">User impact</span><span class="rval">${esc(impTxt)}</span></div>` +
+      `<div class="report-narrative">${esc(d.summary||'')}</div>` +
+      (ev ? `<div class="rsec">Evidence (machine-verified against tool output)</div><ul class="ev-list">${ev}</ul>` : '') +
+      (tl ? `<div class="rsec">Timeline</div><ul class="ev-list">${tl}</ul>` : '') +
+      (oq ? `<div class="rsec">Open questions</div><ul class="ev-list">${oq}</ul>` : '') +
+      (rv ? `<div class="rsec" style="color:var(--red)">Reviewer concerns (unresolved)</div><ul class="ev-list">${rv}</ul>` : '') +
+      fix +
+      `<div class="usage">${d.evidence_count||0} evidence records · ${u.calls||0} LLM calls · ${u.tokens||0} tokens` +
+      `${d.revisions?` · ${d.revisions} revision(s) after verifier feedback`:''}</div>` +
+    `</div>`;
+  (section ? section.body : cardBody()).appendChild(el);
+  scrollB();
+  if (pct!=null) setCard('s-conf', pct+'%', pct>=70?'green':'yellow');
+}
+
+/* ── incident closed ── */
+function renderClosed(d) {
+  const el=document.createElement('div');
+  el.className='closed';
+  el.innerHTML=
+    `<div class="closed-title">${d.success ? '✅ INCIDENT CLOSED' : '✗ NOT RECOVERED'}</div>` +
+    `<div class="closed-text">${esc(d.closure||'Service restored.')}</div>`;
+  (section ? section.body : cardBody()).appendChild(el);
+  if (section) section.el.classList.add('done');
+  scrollB();
+}
+
+/* ── status cards ── */
+function setCard(id, txt, cls) {
+  const el=document.getElementById(id); if(!el)return;
+  el.textContent=txt; el.className='val '+(cls||'');
+}
+
+/* ── phase badge ── */
+function setPhase(p) {
+  const badge=document.getElementById('phase-badge');
+  const lbl={
+    idle:'● IDLE', broken:'● SYSTEM BROKEN', investigating:'● INVESTIGATING',
+    awaiting_approval:'⏸ AWAITING APPROVAL', manual_required:'⚠ MANUAL ACTION', fixing:'● APPLYING FIX',
+    resolved:'✅ RESOLVED', failed:'✗ FAILED',
+  };
+  badge.textContent = lbl[p]||p.toUpperCase();
+  badge.className = ({
+    idle:'idle', broken:'broken', investigating:'investigating',
+    awaiting_approval:'awaiting', manual_required:'broken', fixing:'fixing', resolved:'resolved', failed:'failed',
+  })[p]||'idle';
+}
+
+/* ── button states ── */
+function setBtns(p) {
+  // "busy" = a pipeline is actively running — lock everything destructive
+  const busy     = ['investigating','fixing','awaiting_approval','manual_required'].includes(p);
+  const done     = ['resolved','failed'].includes(p);
+  const brk      = p === 'broken';
+  // Reset is useful any time there's something to clear (not just when done)
+  const canReset = ['broken','awaiting_approval','manual_required','resolved','failed'].includes(p);
+
+  document.getElementById('btn-spike').disabled       = busy || brk || done;
+  document.getElementById('btn-backend').disabled     = busy || brk || done;
+  document.getElementById('btn-postgres').disabled    = busy || brk || done;
+  document.getElementById('btn-investigate').disabled = !(brk || p==='idle');
+  document.getElementById('btn-reset').disabled       = !canReset;
+}
+
+/* ── API calls ── */
+/* Injected server-side from AGENT_API_KEY in .env — never typed or shown. */
+const AGENT_API_KEY = __AGENT_API_KEY__;
+
+function showActionMsg(msg) { document.getElementById('action-msg').textContent = msg; }
+
+async function action(name) {
+  try {
+    const r = await fetch(`/action/${name}`,{method:'POST', headers:{'X-API-Key': AGENT_API_KEY}});
+    if (r.status === 401 || r.status === 503) {
+      showActionMsg('Agent rejected the request — check AGENT_API_KEY in .env and restart the agent.');
+      return;
+    }
+    let body = {};
+    try { body = await r.json(); } catch(e){}
+    if (!r.ok || body.ok === false) {
+      showActionMsg(body.error || body.detail || `Action failed (HTTP ${r.status})`);
+      return;
+    }
+    showActionMsg('');
+  } catch(e) {
+    showActionMsg(`Network error: ${e.message}`);
+  }
+}
+async function execFix() {
+  const b=document.getElementById('exec-btn'); if(b)b.disabled=true;
+  await action('approve');
+}
+
+/* ── SSE ── */
+function connect() {
+  const es = new EventSource('/events');
+
+  es.addEventListener('sync', e=>{
+    const d=JSON.parse(e.data);
+    setPhase(d.phase||'idle');
+    setBtns(d.phase||'idle');
+  });
+
+  es.addEventListener('ping',()=>{});
+
+  es.addEventListener('watcher_active', e=>{
+    const dot = document.getElementById('watcher-dot');
+    const lbl = document.getElementById('watcher-status');
+    if (dot) dot.style.background = '#3fb950';
+    if (lbl) lbl.innerHTML =
+      '<span style="width:6px;height:6px;border-radius:50%;background:#3fb950;display:inline-block;box-shadow:0 0 6px #3fb950"></span> ACTIVE';
+  });
+
+  /* Operator fault injection — outside any incident card. */
+  es.addEventListener('broken', e=>{
+    const d=JSON.parse(e.data);
+    setPhase('broken'); setBtns('broken');
+    if (section) section.el.classList.add('done');
+    card = null; section = null;
+    const el = document.createElement('div'); el.className = 'sys-line';
+    clrEmpty(); $s().appendChild(el);
+    appendLogTo(el, 'SYSTEM', 'error', d.message+' — waiting for the watcher to detect it', d.time);
+  });
+
+  /* A new incident run: card + detection section with the alert signals. */
+  es.addEventListener('investigation_started', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    setPhase('investigating'); setBtns('investigating');
+    newSection(d.auto ? 'Detection — continuous watcher' : 'Manual investigation', false, d.time);
+    const sigs = (d.signals||[]).map(s=>`<li>${esc(s)}</li>`).join('');
+    const el = document.createElement('div');
+    el.className = 'watcher-alert';
+    el.innerHTML =
+      `<div class="watcher-alert-title"><span style="font-size:14px">⚡</span> ` +
+      `${d.auto ? 'ALERT RULES FAILED' : 'OPERATOR REQUEST'}</div>` +
+      `<ul class="watcher-alert-signals">${sigs}</ul>` +
+      `<div style="font-size:10px;color:var(--muted);margin-top:8px">${esc(d.message)}</div>`;
+    section.body.appendChild(el);
+    scrollB();
+  });
+
+  es.addEventListener('stage', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    newSection(d.title, d.grouped, d.time);
+  });
+
+  es.addEventListener('agent_log', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    appendLog(d.agent, d.type, d.msg, d.time);
+  });
+
+  es.addEventListener('llm_start', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    startStream(d.agent, d.time);
+  });
+  es.addEventListener('llm_token', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    addToken(d.agent, d.token);
+  });
+  es.addEventListener('llm_done', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    endStream(d.agent);
+  });
+
+  es.addEventListener('final_report', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    const p=d.remediation?'awaiting_approval':'manual_required';
+    setPhase(p); setBtns(p);
+    renderReport(d);
+  });
+
+  es.addEventListener('awaiting_approval',()=>{});
+  es.addEventListener('manual_required', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    if (section) section.el.classList.add('done');
+    setPhase('manual_required'); setBtns('manual_required');
+    appendLog('SYSTEM','error',d.message,d.time);
+  });
+
+  /* Live status from the watcher — every value here is measured. */
+  es.addEventListener('status', e=>{
+    const d=JSON.parse(e.data);
+    const b={healthy:['HEALTHY','green'],unhealthy:['UNHEALTHY','red'],unreachable:['UNREACHABLE','red']}[d.backend]||['UNKNOWN',''];
+    setCard('s-backend', b[0], b[1]);
+    const db={connected:['CONNECTED','green'],disconnected:['DISCONNECTED','red']}[d.database]||['UNKNOWN',''];
+    setCard('s-db', db[0], db[1]);
+    if (d.client_error_pct==null) setCard('s-errors','—','');
+    else setCard('s-errors', d.client_error_pct+'%', d.client_error_pct>0?'red':'green');
+  });
+
+  es.addEventListener('fix_started', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    setPhase('fixing'); setBtns('fixing');
+    appendLog('SYSTEM','start',d.message,d.time);
+  });
+
+  es.addEventListener('incident_closed', e=>{
+    const d=JSON.parse(e.data);
+    if (!acceptRun(d)) return;
+    const p=d.success?'resolved':'failed';
+    setPhase(p); setBtns(p);
+    renderClosed(d);
+  });
+
+  es.addEventListener('error', e=>{
+    try {
+      const d=JSON.parse(e.data);
+      if (!acceptRun(d)) return;
+      appendLog('SYSTEM','error','ERROR: '+(d.message||'unknown'),d.time);
+    }catch(_){}
+    setPhase('failed'); setBtns('failed');
+  });
+
+  es.addEventListener('reset', e=>{
+    setPhase('idle'); setBtns('idle');
+    setCard('s-conf','—','');
+    card = null; section = null;
+    $s().innerHTML=
+      `<div class="empty-state">` +
+      `<div class="icon">🤖</div>` +
+      `<div>Ready — inject an incident and the watcher will auto-investigate</div>` +
+      `<div style="margin-top:6px;font-size:11px;color:#484f58">` +
+      `Watcher → Triage → Incident Commander ⇄ Logs · Metrics · Infra agents → Evidence Verifier → Reviewer → Remediation Planner → Human approval` +
+      `</div></div>`;
+  });
+
+  es.onerror = ()=>{ setTimeout(connect,3000); };
+}
+
+connect();
+</script>
+</body>
+</html>
