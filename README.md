@@ -156,3 +156,7 @@ send-back loops, runbook allow-listing and LLM outage handling.
   after a human approves.
 - The fault-injection endpoint needs its own token and leaves no trace in any log the
   agents can read.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
