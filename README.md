@@ -39,6 +39,26 @@ unavailable, the system says so; it never falls back to canned answers.
 | **Synthetic client** | `loadgen/` sends steady user-like traffic and measures what users actually experience, even when the backend is too broken to report its own metrics. |
 | **Incident memory** | ChromaDB semantic search over past diagnoses and how their fixes turned out, plus a JSON audit record per incident (full evidence ledger, token usage). |
 
+## A real incident, end to end
+
+A database connection leak was injected into the backend. Nothing told the agents what it was.
+
+| | |
+|---|---|
+| **Impact** | 714 of 714 synthetic user requests failed over 179 s (`/health` and `/orders`) |
+| **Detected** | Watcher alert 13 s after the first failing check: `/health` returning HTTP 503 |
+| **Root cause** | SQLAlchemy connection pool exhausted (`QueuePool limit of size 5 overflow 10 reached`), found by the logs agent |
+| **Evidence** | 15 tool results in the ledger; 3 of 3 cited quotes verified verbatim |
+| **Fix** | Planner chose the `restart_service` runbook for `poc-backend`; executed after human approval |
+| **Recovery** | Measured, not assumed: 0 of 80 requests failed over 20 s of real traffic afterwards |
+| **Cost** | 23 LLM calls, about 35K tokens |
+
+The full audit record, including every tool call and the evidence ledger, is in
+[docs/examples/incident-connection-pool-exhausted.json](docs/examples/incident-connection-pool-exhausted.json).
+
+The runbook catalog has four entries: `restart_service`, `start_stopped_service`,
+`recover_database` and `restore_app_db_role`. The planner can propose only these, or nothing.
+
 ## Documentation
 
 | Document | Contents |
@@ -73,7 +93,7 @@ unavailable, the system says so; it never falls back to canned answers.
 ├── backend/                        the monitored service: FastAPI + PostgreSQL
 ├── loadgen/                        synthetic client (black-box user traffic)
 ├── monitoring/                     Prometheus + Grafana provisioning
-├── docs/                           demo guide and roadmap
+├── docs/                           architecture, configuration, extending, roadmap, example incident
 ├── docker-compose.yml
 └── .env.example
 ```

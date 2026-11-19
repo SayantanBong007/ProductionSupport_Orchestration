@@ -7,7 +7,7 @@ failures** — the whole backend is down, the whole database is down, the connec
 exhausted. One signal check, one fix, applied to the whole service.
 
 Real production incidents are often the opposite shape: **individual requests failing
-intermittently** while the service overall looks healthy. Example — field operations upload
+intermittently** while the service overall looks healthy. Example — users upload
 photos, and some fraction of uploads fail. Today that's diagnosed manually:
 
 ```
@@ -36,7 +36,7 @@ None of this is a rewrite of the POC's architecture — it's the **same StateGra
 (a commander dispatching tool-calling specialists, evidence-verified), pointed at different,
 request-scoped tools.
 
-## Proposed architecture, mapped to your real stack
+## Proposed architecture, on a typical production stack
 
 ```
 FAILING REQUEST REPORTED (correlation_id known)
