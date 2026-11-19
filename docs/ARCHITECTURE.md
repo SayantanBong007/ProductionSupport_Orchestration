@@ -5,25 +5,23 @@ deliberately deterministic, and the design choices behind it.
 
 ## 1. System overview
 
-```
-┌─────────────────────────── docker compose ───────────────────────────────┐
-│                                                                          │
-│  loadgen ──requests──► backend (FastAPI) ──► postgres                    │
-│     │ client metrics      │ metrics, logs                                │
-│     ▼                     ▼                                              │
-│  prometheus ◄─────────────┘        elasticsearch ◄── backend logs        │
-│     ▲                                   ▲                                │
-│     │ PromQL           Lucene queries   │        Docker Engine API       │
-│     └──────────────┬────────────────────┘◄──────────── (socket) ──┐      │
-│                    │                                              │      │
-│               ┌────┴──────────────── agent (sre_agent) ───────────┴──┐   │
-│               │ watcher ─► investigation graph ─► human approval ─►  │   │
-│               │            remediation graph          (UI :8080)     │   │
-│               └───────────────────────┬──────────────────────────────┘   │
-│                                       │ OpenAI-compatible API            │
-└───────────────────────────────────────┼──────────────────────────────────┘
-                                        ▼
-                                   LLM provider (Groq)
+```mermaid
+flowchart LR
+    subgraph compose["docker compose"]
+        LG["loadgen"] -->|requests| BE["backend (FastAPI)"]
+        BE --> PG[("postgres")]
+        LG -->|client metrics| PROM[("prometheus")]
+        BE -->|metrics| PROM
+        BE -->|logs| ES[("elasticsearch")]
+        subgraph AG["agent (sre_agent)"]
+            W["watcher"] --> IG["investigation graph"] --> HA{{"human approval<br/>UI :8080"}} --> RG["remediation graph"]
+        end
+        IG -->|PromQL| PROM
+        IG -->|Lucene queries| ES
+        IG -->|Docker Engine API| DS{{"Docker socket"}}
+        RG -->|runbook actions| DS
+    end
+    AG -->|OpenAI-compatible API| LLM["LLM provider (Groq)"]
 ```
 
 | Service | Role |
@@ -36,11 +34,18 @@ deliberately deterministic, and the design choices behind it.
 
 ## 2. Incident lifecycle
 
-```
-idle ─► investigating ─► awaiting_approval ─► fixing ─► resolved
-  ▲          │                                   │
-  │          └─► manual_required                 └─► failed
-  └─────────────────────── reset ────────────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> investigating: alert
+    investigating --> awaiting_approval: runbook proposed
+    investigating --> manual_required: no approved runbook applies
+    awaiting_approval --> fixing: human approves
+    fixing --> resolved: recovery measured
+    fixing --> failed: service not restored
+    resolved --> idle: reset
+    failed --> idle: reset
+    manual_required --> idle: reset
 ```
 
 1. **Detection.** `watcher.py` evaluates generic alert rules every 10 s. After 2 consecutive
@@ -62,11 +67,19 @@ working in parallel do not interleave.
 
 ## 3. Investigation graph
 
+```mermaid
+flowchart LR
+    triage --> commander --> verify
+    verify -->|quotes found| review
+    verify -->|quote missing| revise
+    review -->|challenge| revise
+    revise --> commander
+    review -->|accept| planner --> report --> store
+    classDef ai fill:#dbe7fe,stroke:#2563eb,stroke-width:2px
+    class commander,review,planner ai
 ```
-triage ─► commander ─► verify ─► review ─► planner ─► report ─► store
-              ▲           │         │
-              └─ revise ◄─┴─────────┘
-```
+
+Blue nodes call the LLM; the rest are deterministic.
 
 | Node | Kind | What it does |
 |---|---|---|
@@ -98,6 +111,16 @@ The agents write their own queries; for example, the metrics agent discovers met
 
 The central design rule is that **a claim counts only if a tool actually returned it**.
 
+```mermaid
+flowchart LR
+    T["tool call"] -->|raw output stored| L[("ledger<br/>E1, E2, E3 ...")]
+    A["agent claim<br/>finding + evidence_id + quote"] --> C{"quote appears<br/>in that output?"}
+    L --> C
+    C -->|yes| OK["✓ verified<br/>commander may rely on it"]
+    C -->|no| NO["✗ UNVERIFIED<br/>sent back with the failures listed"]
+```
+
+
 1. Every tool call is stored in the **evidence ledger** (`core/evidence.py`) with an id
    (`E1`, `E2`, …) and its raw output.
 2. Specialists must report findings as `{finding, evidence_id, quote}`. Each quote is checked
@@ -115,8 +138,9 @@ queried, and the reviewer caught a commander blaming an earlier, unrelated conta
 
 ## 5. Remediation graph
 
-```
-execute ─► verify ─► closure
+```mermaid
+flowchart LR
+    approve{{"human approval"}} --> execute["execute<br/>runbook steps"] --> verify["verify<br/>/health, containers,<br/>20 s real traffic"] --> closure["closure<br/>outcome to memory"]
 ```
 
 - **execute** runs the steps of the approved runbook (`runbooks.yaml`) through a fixed

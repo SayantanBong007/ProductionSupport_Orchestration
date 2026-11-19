@@ -1,5 +1,7 @@
 # Agentic AI — Production Support
 
+![Agentic SRE: AI agents investigate production incidents with real tools, prove every claim, and fix only what a human approves](docs/assets/banner.png)
+
 A team of LLM agents, orchestrated with **LangGraph**, that watches a running service
 stack, investigates incidents with real tools, proves every claim with verifiable
 evidence, and fixes what it is allowed to fix, after a human approves.
@@ -9,23 +11,74 @@ container. Detection uses generic alert rules. Root cause, severity and the reme
 choice are decided by the agents from what their tools return. When the LLM is
 unavailable, the system says so; it never falls back to canned answers.
 
-## How it works
+<p align="center">
+  <img src="docs/assets/demo.gif" width="720" alt="Animated demo: the commander sends three specialist agents, every claim is verified, the fix waits for one tap of approval, and recovery is measured" />
+</p>
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph stack["Monitored stack (docker compose)"]
+        LG["loadgen<br/>synthetic users"] -->|HTTP traffic| BE["backend<br/>FastAPI"]
+        BE --> PG[("PostgreSQL")]
+        BE -->|metrics| PROM[("Prometheus")]
+        LG -->|client metrics| PROM
+        BE -->|logs| ES[("Elasticsearch")]
+    end
+
+    subgraph agent["agent container (sre_agent)"]
+        W["Watcher<br/>every 10 s"] -->|alert: symptoms only| INV["Investigation graph"]
+        INV -->|report + proposed runbook| UI["Agent UI :8080"]
+        UI -->|human approves| REM["Remediation graph"]
+        INV <-->|similar past incidents| MEM[("ChromaDB<br/>incident memory")]
+        REM -->|outcome| MEM
+    end
+
+    W -. health + traffic checks .-> BE
+    INV -->|PromQL| PROM
+    INV -->|Lucene queries| ES
+    INV -->|Docker Engine API| DK{{"Docker socket"}}
+    REM -->|runbook actions only| DK
+    INV <-->|OpenAI-compatible API| LLM["LLM provider<br/>(Groq by default)"]
 ```
-                 ┌────────────────────── Investigation graph ───────────────────────┐
- alert rule ───► │ triage ─► Incident Commander ─► evidence verifier ─► reviewer ─┐ │
- (watcher)       │              ▲   │ dispatches (parallel)          │            │ │
-                 │              │   ▼                                ▼            │ │
-                 │              │  logs · metrics · infrastructure  revise ◄──────┤ │
-                 │              │  specialist agents (tool calls)                 │ │
-                 │              └──────────────── revise ◄────────────────────────┘ │
-                 │  remediation planner (approved runbooks only) ─► report ─► store │
-                 └────────────────────────────────────┬─────────────────────────────┘
-                                                      │ human approval (UI)
-                 ┌─────────────────── Remediation graph ──────────────────────┐
-                 │ execute runbook steps ─► verify recovery (measured) ─► close │
-                 └──────────────────────────────────────────────────────────────┘
+
+## How an incident is handled
+
+```mermaid
+flowchart TD
+    A(["🚨 Alert from the watcher"]) --> TR["triage<br/>container list + live /health"]
+    TR --> CMD["🧭 Incident Commander"]
+    CMD -->|dispatch, in parallel| LOGS["📜 Logs agent<br/>Elasticsearch, container logs"]
+    CMD -->|dispatch, in parallel| MET["📊 Metrics agent<br/>Prometheus, /health"]
+    CMD -->|dispatch, in parallel| INF["🐳 Infra agent<br/>containers, Docker events"]
+    LOGS & MET & INF -->|findings + quotes| LEDGER[("🧾 Evidence ledger<br/>E1, E2, E3 ...")]
+    LEDGER --> CMD
+    CMD -->|diagnosis citing evidence| VER{"✅ verify<br/>every quote found<br/>word for word?"}
+    VER -->|no| REV["revise"]
+    VER -->|yes| RVW{"🧐 Reviewer<br/>does the conclusion<br/>follow from the evidence?"}
+    RVW -->|challenge| REV
+    REV --> CMD
+    RVW -->|accept| PLAN["🛠️ Planner<br/>approved runbooks only"]
+    PLAN --> REP["report<br/>measures user impact"]
+    REP --> STORE[("📚 store<br/>JSON audit + ChromaDB")]
+    REP --> HUMAN{{"👤 Human approves?"}}
+    HUMAN -->|approve| EXE["execute runbook steps"]
+    EXE --> RCV["verify recovery<br/>20 s of real traffic"]
+    RCV --> CLOSE(["closure, outcome saved to memory"])
+
+    classDef ai fill:#dbe7fe,stroke:#2563eb,stroke-width:2px,color:#0f172a
+    classDef det fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef gate fill:#dcf5e9,stroke:#16a36b,stroke-width:2px,color:#0f172a
+    class CMD,LOGS,MET,INF,RVW,PLAN ai
+    class TR,VER,REV,REP,STORE,EXE,RCV,LEDGER det
+    class CLOSE ai
+    class HUMAN gate
 ```
+
+Blue nodes are LLM agents; grey nodes are deterministic code; green is the human gate.
+The AI decides the root cause and which runbook fits. Checking quotes, running the fix and
+measuring recovery are plain code, so a model cannot talk its way past them.
 
 | Component | Role |
 |---|---|
@@ -58,6 +111,37 @@ The full audit record, including every tool call and the evidence ledger, is in
 
 The runbook catalog has four entries: `restart_service`, `start_stopped_service`,
 `recover_database` and `restore_app_db_role`. The planner can propose only these, or nothing.
+
+### The same incident, step by step
+
+| | |
+|:---:|:---:|
+| **1. The watcher spots the problem**<br/>2 failed checks in a row, symptoms only<br/><img src="docs/assets/step-detect.png" width="440" alt="Watcher timeline with two failed checks and the alert" /> | **2. The commander sends specialists**<br/>logs, metrics and infra agents in parallel<br/><img src="docs/assets/step-dispatch.png" width="440" alt="Incident Commander dispatching three specialist agents" /> |
+| **3. Every result becomes evidence**<br/>E3: the connection pool is full (15 / 15)<br/><img src="docs/assets/step-ledger.png" width="440" alt="Evidence ledger with E3 highlighted as the smoking gun" /> | **4. Every claim is checked**<br/>quotes matched word for word against raw output<br/><img src="docs/assets/step-verify.png" width="440" alt="Verifier matching a quote in E3 and rejecting an invented one" /> |
+| **5. A skeptic reviews the logic**<br/>it can send the diagnosis back<br/><img src="docs/assets/step-review.png" width="440" alt="Reviewer agent sending a diagnosis back to the commander" /> | **6. Only approved fixes, only with your OK**<br/>runbook catalog + human approval<br/><img src="docs/assets/step-plan.png" width="440" alt="Planner choosing restart_service from the runbook catalog, approved by a human" /> |
+| **7. Fix it, then measure it**<br/>0 of 80 requests failed afterwards<br/><img src="docs/assets/step-fix.png" width="440" alt="Runbook steps and 80 successful requests after the fix" /> | **Incident lifecycle**<br/><br/>`idle` → `investigating` → `awaiting_approval` → `fixing` → `resolved`<br/><br/>or `manual_required` when no approved runbook applies, `failed` when the fix does not restore the service |
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Watcher
+    participant C as Incident Commander
+    participant S as Specialists (logs, metrics, infra)
+    participant V as Verifier + Reviewer
+    participant P as Planner
+    participant H as Human
+    participant R as Remediation
+    W->>C: alert (symptoms only)
+    C->>S: dispatch in parallel
+    S-->>C: findings, each citing evidence E1..En
+    C->>V: diagnosis with quotes
+    V-->>C: send back if a quote is missing or the logic is weak
+    V->>P: verified, reviewed diagnosis
+    P->>H: proposed runbook (from the approved catalog)
+    H->>R: approve
+    R->>R: run steps, then 20 s of real traffic
+    R-->>H: recovered: 0 of 80 requests failed
+```
 
 ## Documentation
 
